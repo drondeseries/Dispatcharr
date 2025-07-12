@@ -206,7 +206,7 @@ class ProxyServer:
                                                 self.redis_client.setex(disconnect_key, 60, str(time.time()))
 
                                                 # Get configured shutdown delay or default
-                                                shutdown_delay = getattr(Config, 'CHANNEL_SHUTDOWN_DELAY', 0)
+                                                shutdown_delay = ConfigHelper.channel_shutdown_delay()
 
                                                 if shutdown_delay > 0:
                                                     logger.info(f"Waiting {shutdown_delay}s before stopping channel...")
@@ -472,7 +472,7 @@ class ProxyServer:
                     if b'state' in metadata:
                         state = metadata[b'state'].decode('utf-8')
                         active_states = [ChannelState.INITIALIZING, ChannelState.CONNECTING,
-                                        ChannelState.WAITING_FOR_CLIENTS, ChannelState.ACTIVE]
+                                        ChannelState.WAITING_FOR_CLIENTS, ChannelState.ACTIVE, ChannelState.BUFFERING]
                         if state in active_states:
                             logger.info(f"Channel {channel_id} already being initialized with state {state}")
                             # Create buffer and client manager only if we don't have them
@@ -689,7 +689,8 @@ class ProxyServer:
                 owner = metadata.get(b'owner', b'').decode('utf-8')
 
                 # States that indicate the channel is running properly
-                valid_states = [ChannelState.ACTIVE, ChannelState.WAITING_FOR_CLIENTS, ChannelState.CONNECTING]
+                valid_states = [ChannelState.ACTIVE, ChannelState.WAITING_FOR_CLIENTS,
+                                ChannelState.CONNECTING, ChannelState.BUFFERING, ChannelState.INITIALIZING]
 
                 # If the channel is in a valid state, check if the owner is still active
                 if state in valid_states:
@@ -707,7 +708,7 @@ class ProxyServer:
                 elif state in [ChannelState.STOPPING, ChannelState.STOPPED, ChannelState.ERROR]:
                     # These states indicate the channel should be reinitialized
                     logger.info(f"Channel {channel_id} exists but in terminal state: {state}")
-                    return False
+                    return True
                 else:
                     # Unknown or initializing state, check how long it's been in this state
                     if b'state_changed_at' in metadata:
@@ -941,7 +942,7 @@ class ProxyServer:
 
                                 # If waiting for clients, check grace period
                                 if connection_ready_time:
-                                    grace_period = ConfigHelper.get('CHANNEL_INIT_GRACE_PERIOD', 20)
+                                    grace_period = ConfigHelper.channel_init_grace_period()
                                     time_since_ready = time.time() - connection_ready_time
 
                                     # Add this debug log

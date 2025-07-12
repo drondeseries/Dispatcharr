@@ -34,7 +34,7 @@ class ConfigHelper:
     @staticmethod
     def channel_shutdown_delay():
         """Get channel shutdown delay in seconds"""
-        return ConfigHelper.get('CHANNEL_SHUTDOWN_DELAY', 0)
+        return Config.get_channel_shutdown_delay()
 
     @staticmethod
     def initial_behind_chunks():
@@ -54,7 +54,7 @@ class ConfigHelper:
     @staticmethod
     def redis_chunk_ttl():
         """Get Redis chunk TTL in seconds"""
-        return ConfigHelper.get('REDIS_CHUNK_TTL', 60)
+        return Config.get_redis_chunk_ttl()
 
     @staticmethod
     def chunk_size():
@@ -85,3 +85,18 @@ class ConfigHelper:
     def failover_grace_period():
         """Get extra time (in seconds) to allow for stream switching before disconnecting clients"""
         return ConfigHelper.get('FAILOVER_GRACE_PERIOD', 20)  # Default to 20 seconds
+
+    @staticmethod
+    def buffering_timeout():
+        """Get buffering timeout in seconds"""
+        return Config.get_buffering_timeout()
+
+    @staticmethod
+    def buffering_speed():
+        """Get buffering speed threshold"""
+        return Config.get_buffering_speed()
+
+    @staticmethod
+    def channel_init_grace_period():
+        """Get channel initialization grace period in seconds"""
+        return Config.get_channel_init_grace_period()

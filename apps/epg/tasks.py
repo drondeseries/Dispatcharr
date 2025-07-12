@@ -843,7 +843,7 @@ def parse_channels_only(source):
 
             # Change iterparse to look for both channel and programme elements
             logger.debug(f"Creating iterparse context for channels and programmes")
-            channel_parser = etree.iterparse(source_file, events=('end',), tag=('channel', 'programme'))
+            channel_parser = etree.iterparse(source_file, events=('end',), tag=('channel', 'programme'), remove_blank_text=True)
             if process:
                 logger.debug(f"[parse_channels_only] Memory after creating iterparse: {process.memory_info().rss / 1024 / 1024:.2f} MB")
 
@@ -851,7 +851,6 @@ def parse_channels_only(source):
             total_elements_processed = 0  # Track total elements processed, not just channels
             for _, elem in channel_parser:
                 total_elements_processed += 1
-
                 # Only process channel elements
                 if elem.tag == 'channel':
                     channel_count += 1
@@ -967,6 +966,7 @@ def parse_channels_only(source):
                     logger.debug(f"[parse_channels_only] Total elements processed: {total_elements_processed}")
 
                 else:
+                    logger.trace(f"[parse_channels_only] Skipping non-channel element: {elem.get('channel', 'unknown')} - {elem.get('start', 'unknown')} {elem.tag}")
                     clear_element(elem)
                     continue
 
@@ -1034,6 +1034,11 @@ def parse_channels_only(source):
         if process:
             logger.debug(f"[parse_channels_only] Memory before cleanup: {process.memory_info().rss / 1024 / 1024:.2f} MB")
         try:
+            # Output any errors in the channel_parser error log
+            if 'channel_parser' in locals() and hasattr(channel_parser, 'error_log') and len(channel_parser.error_log) > 0:
+                logger.debug(f"XML parser errors found ({len(channel_parser.error_log)} total):")
+                for i, error in enumerate(channel_parser.error_log):
+                    logger.debug(f"  Error {i+1}: {error}")
             if 'channel_parser' in locals():
                 del channel_parser
             if 'elem' in locals():
@@ -1190,7 +1195,7 @@ def parse_programs_for_tvg_id(epg_id):
             source_file = open(file_path, 'rb')
 
             # Stream parse the file using lxml's iterparse
-            program_parser = etree.iterparse(source_file, events=('end',), tag='programme')
+            program_parser = etree.iterparse(source_file, events=('end',), tag='programme',  remove_blank_text=True)
 
             for _, elem in program_parser:
                 if elem.get('channel') == epg.tvg_id:
@@ -1629,6 +1634,9 @@ def extract_custom_properties(prog):
         elif system == 'onscreen' and ep_num.text:
             # Just store the raw onscreen format
             custom_props['onscreen_episode'] = ep_num.text.strip()
+        elif system == 'dd_progid' and ep_num.text:
+            # Store the dd_progid format
+            custom_props['dd_progid'] = ep_num.text.strip()
 
     # Extract ratings more efficiently
     rating_elem = prog.find('rating')
@@ -1664,7 +1672,7 @@ def extract_custom_properties(prog):
         custom_props['icon'] = icon_elem.get('src')
 
     # Simpler approach for boolean flags
-    for kw in ['previously-shown', 'premiere', 'new']:
+    for kw in ['previously-shown', 'premiere', 'new', 'live']:
         if prog.find(kw) is not None:
             custom_props[kw.replace('-', '_')] = True
 

@@ -18,10 +18,11 @@ django-cors-headers
 djangorestframework-simplejwt
 m3u8
 rapidfuzz==3.12.1
+tzlocal
+
 # PyTorch dependencies (CPU only)
 --extra-index-url https://download.pytorch.org/whl/cpu/
 torch==2.6.0+cpu
-tzlocal
 
 # ML/NLP dependencies
 sentence-transformers==3.4.1

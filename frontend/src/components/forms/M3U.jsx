@@ -85,7 +85,7 @@ const M3U = ({
         account_type: m3uAccount.account_type,
         username: m3uAccount.username ?? '',
         password: '',
-        stale_stream_days: m3uAccount.stale_stream_days || 7,
+        stale_stream_days: m3uAccount.stale_stream_days !== undefined && m3uAccount.stale_stream_days !== null ? m3uAccount.stale_stream_days : 7,
       });
 
       if (m3uAccount.account_type == 'XC') {
@@ -225,7 +225,7 @@ const M3U = ({
               id="account_type"
               name="account_type"
               label="Account Type"
-              description="Standard for direct M3U URLs, Xtream Codes for panel-based services"
+              description={<>Standard for direct M3U URLs, <br />Xtream Codes for panel-based services</>}
               data={[
                 {
                   value: 'STD',
@@ -233,7 +233,7 @@ const M3U = ({
                 },
                 {
                   value: 'XC',
-                  label: 'XTream Codes',
+                  label: 'Xtream Codes',
                 },
               ]}
               key={form.key('account_type')}
@@ -324,7 +324,7 @@ const M3U = ({
             />
 
             <NumberInput
-              min={1}
+              min={0}
               max={365}
               label="Stale Stream Retention (days)"
               description="Streams not seen for this many days will be removed"

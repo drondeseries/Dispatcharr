@@ -192,9 +192,10 @@ export const WebsocketProvider = ({ children }) => {
               // Update the playlist status whenever we receive a status update
               // Not just when progress is 100% or status is pending_setup
               if (parsedEvent.data.status && parsedEvent.data.account) {
-                const playlist = playlists.find(
-                  (p) => p.id === parsedEvent.data.account
-                );
+                // Check if playlists is an object with IDs as keys or an array
+                const playlist = Array.isArray(playlists)
+                  ? playlists.find((p) => p.id === parsedEvent.data.account)
+                  : playlists[parsedEvent.data.account];
 
                 if (playlist) {
                   // When we receive a "success" status with 100% progress, this is a completed refresh
@@ -212,9 +213,18 @@ export const WebsocketProvider = ({ children }) => {
                     parsedEvent.data.progress === 100
                   ) {
                     updateData.updated_at = new Date().toISOString();
+                    // Log successful completion for debugging
+                    console.log('M3U refresh completed successfully:', updateData);
                   }
 
                   updatePlaylist(updateData);
+                } else {
+                  // Log when playlist can't be found for debugging purposes
+                  console.warn(
+                    `Received update for unknown playlist ID: ${parsedEvent.data.account}`,
+                    Array.isArray(playlists) ? 'playlists is array' : 'playlists is object',
+                    Object.keys(playlists).length
+                  );
                 }
               }
               break;

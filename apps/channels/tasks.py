@@ -1,6 +1,7 @@
 # apps/channels/tasks.py
 import logging
 import os
+import select
 import re
 import requests
 import time
@@ -136,18 +137,35 @@ def match_epg_channels():
             text=True
         )
 
-        # Log stderr in real-time
-        for line in iter(process.stderr.readline, ''):
-            if line:
-                logger.info(line.strip())
+        stdout = ''
+        block_size = 1024
 
-        process.stderr.close()
-        stdout, stderr = process.communicate()
+        while True:
+            # Monitor stdout and stderr for readability
+            readable, _, _ = select.select([process.stdout, process.stderr], [], [], 1) # timeout of 1 second
 
+            if not readable: # timeout expired
+                if process.poll() is not None: # check if process finished
+                    break
+                else: # process still running, continue
+                    continue
+
+            for stream in readable:
+                if stream == process.stdout:
+                    stdout += stream.read(block_size)
+                elif stream == process.stderr:
+                    error = stream.readline()
+                    if error:
+                        logger.info(error.strip())
+
+            if process.poll() is not None:
+                break
+
+        process.wait()
         os.remove(temp_file_path)
 
         if process.returncode != 0:
-            return f"Failed to process EPG matching: {stderr}"
+            return f"Failed to process EPG matching"
 
         result = json.loads(stdout)
         # This returns lists of dicts, not model objects

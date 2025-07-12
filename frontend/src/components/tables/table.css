@@ -49,17 +49,17 @@ html {
 }
 
 .divTable.table-size-compact .td {
-  height: 28px;
+  min-height: 28px;
   font-size: var(--mantine-font-size-sm);
 }
 
 .divTable.table-size-default .td {
-  height: 40px;
+  min-height: 40px;
   font-size: var(--mantine-font-size-md);
 }
 
 .divTable.table-size-large .td {
-  height: 48px;
+  min-height: 48px;
   font-size: var(--mantine-font-size-md);
 }
 

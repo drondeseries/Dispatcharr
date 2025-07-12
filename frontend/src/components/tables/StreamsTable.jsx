@@ -36,8 +36,9 @@ import {
   MultiSelect,
   useMantineTheme,
   UnstyledButton,
+  LoadingOverlay,
+  Skeleton,
 } from '@mantine/core';
-import { IconSquarePlus } from '@tabler/icons-react';
 import { useNavigate } from 'react-router-dom';
 import useSettingsStore from '../../store/settings';
 import useVideoStore from '../../store/useVideoStore';
@@ -169,7 +170,7 @@ const StreamRowActions = ({
   );
 };
 
-const StreamsTable = ({}) => {
+const StreamsTable = ({ }) => {
   const theme = useMantineTheme();
 
   /**
@@ -197,7 +198,13 @@ const StreamsTable = ({}) => {
     channel_group: '',
     m3u_account: '',
   });
-  const debouncedFilters = useDebounce(filters, 500);
+  const debouncedFilters = useDebounce(filters, 500, () => {
+    // Reset to first page whenever filters change to avoid "Invalid page" errors
+    setPagination((prev) => ({
+      ...prev,
+      pageIndex: 0,
+    }));
+  });
 
   // Add state to track if stream groups are loaded
   const [groupsLoaded, setGroupsLoaded] = useState(false);
@@ -306,12 +313,6 @@ const StreamsTable = ({}) => {
       ...prev,
       [name]: value,
     }));
-
-    // Reset to first page whenever filters change to avoid "Invalid page" errors
-    setPagination((prev) => ({
-      ...prev,
-      pageIndex: 0,
-    }));
   };
 
   const handleGroupChange = (value) => {
@@ -319,24 +320,12 @@ const StreamsTable = ({}) => {
       ...prev,
       channel_group: value ? value : '',
     }));
-
-    // Reset to first page whenever filters change to avoid "Invalid page" errors
-    setPagination((prev) => ({
-      ...prev,
-      pageIndex: 0,
-    }));
   };
 
   const handleM3UChange = (value) => {
     setFilters((prev) => ({
       ...prev,
       m3u_account: value ? value : '',
-    }));
-
-    // Reset to first page whenever filters change to avoid "Invalid page" errors
-    setPagination((prev) => ({
-      ...prev,
-      pageIndex: 0,
     }));
   };
 
@@ -664,7 +653,7 @@ const StreamsTable = ({}) => {
 
       <Paper
         style={{
-          height: 'calc(100vh - 75px)',
+          height: 'calc(100vh - 60px)',
           backgroundColor: '#27272A',
         }}
       >
@@ -672,7 +661,7 @@ const StreamsTable = ({}) => {
         <Group justify="space-between" style={{ paddingLeft: 10 }}>
           <Box>
             <Button
-              leftSection={<IconSquarePlus size={18} />}
+              leftSection={<SquarePlus size={18} />}
               variant={
                 selectedStreamIds.length > 0 && selectedChannelIds.length === 1
                   ? 'light'
@@ -689,10 +678,10 @@ const StreamsTable = ({}) => {
               style={
                 selectedStreamIds.length > 0 && selectedChannelIds.length === 1
                   ? {
-                      borderWidth: '1px',
-                      borderColor: theme.tailwind.green[5],
-                      color: 'white',
-                    }
+                    borderWidth: '1px',
+                    borderColor: theme.tailwind.green[5],
+                    color: 'white',
+                  }
                   : undefined
               }
               disabled={
@@ -725,7 +714,7 @@ const StreamsTable = ({}) => {
               </Button>
 
               <Button
-                leftSection={<IconSquarePlus size={18} />}
+                leftSection={<SquarePlus size={18} />}
                 variant="default"
                 size="xs"
                 onClick={createChannelsFromStreams}
@@ -736,7 +725,7 @@ const StreamsTable = ({}) => {
               </Button>
 
               <Button
-                leftSection={<IconSquarePlus size={18} />}
+                leftSection={<SquarePlus size={18} />}
                 variant="light"
                 size="xs"
                 onClick={() => editStream()}
@@ -812,7 +801,7 @@ const StreamsTable = ({}) => {
             style={{
               display: 'flex',
               flexDirection: 'column',
-              height: 'calc(100vh - 110px)',
+              height: 'calc(100vh - 100px)',
             }}
           >
             <Box
@@ -824,6 +813,7 @@ const StreamsTable = ({}) => {
                 borderRadius: 'var(--mantine-radius-default)',
               }}
             >
+              <LoadingOverlay visible={isLoading} />
               <CustomTable table={table} />
             </Box>
 

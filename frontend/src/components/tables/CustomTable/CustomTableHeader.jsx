@@ -8,6 +8,7 @@ const CustomTableHeader = ({
   selectedTableIds,
   headerCellRenderFns,
   onSelectAllChange,
+  tableCellProps,
 }) => {
   const renderHeaderCell = (header) => {
     if (headerCellRenderFns[header.id]) {
@@ -66,6 +67,7 @@ const CustomTableHeader = ({
                     ? header.getSize()
                     : undefined,
                   minWidth: 0,
+                  // ...(tableCellProps && tableCellProps({ cell: header })),
                 }}
               >
                 <Flex

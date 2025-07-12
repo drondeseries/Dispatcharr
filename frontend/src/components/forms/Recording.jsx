@@ -42,6 +42,9 @@ const DVR = ({ recording = null, channel = null, isOpen, onClose }) => {
 
   const onSubmit = async () => {
     const { channel_id, ...values } = form.getValues();
+
+    console.log(values);
+
     await API.createRecording({
       ...values,
       channel: channel_id,

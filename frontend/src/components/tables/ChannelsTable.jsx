@@ -3,6 +3,7 @@ import useChannelsStore from '../../store/channels';
 import { notifications } from '@mantine/notifications';
 import API from '../../api';
 import ChannelForm from '../forms/Channel';
+import ChannelBatchForm from '../forms/ChannelBatch';
 import RecordingForm from '../forms/Recording';
 import { useDebounce, copyToClipboard } from '../../utils';
 import logo from '../../images/logo.png';
@@ -40,6 +41,9 @@ import {
   Pagination,
   NativeSelect,
   UnstyledButton,
+  Stack,
+  Select,
+  NumberInput,
 } from '@mantine/core';
 import { getCoreRowModel, flexRender } from '@tanstack/react-table';
 import './table.css';
@@ -51,6 +55,8 @@ import ChannelsTableOnboarding from './ChannelsTable/ChannelsTableOnboarding';
 import ChannelTableHeader from './ChannelsTable/ChannelTableHeader';
 import useWarningsStore from '../../store/warnings';
 import ConfirmationDialog from '../ConfirmationDialog';
+import useAuthStore from '../../store/auth';
+import { USER_LEVELS } from '../../constants';
 
 const m3uUrlBase = `${window.location.protocol}//${window.location.host}/output/m3u`;
 const epgUrlBase = `${window.location.protocol}//${window.location.host}/output/epg`;
@@ -108,6 +114,8 @@ const ChannelRowActions = React.memo(
     const channelUuid = row.original.uuid;
     const [tableSize, _] = useLocalStorage('table-size', 'default');
 
+    const authUser = useAuthStore((s) => s.user);
+
     const onEdit = useCallback(() => {
       // Use the ID directly to avoid issues with filtered tables
       console.log(`Editing channel ID: ${channelId}`);
@@ -141,6 +149,7 @@ const ChannelRowActions = React.memo(
             variant="transparent"
             color={theme.tailwind.yellow[3]}
             onClick={onEdit}
+            disabled={authUser.user_level != USER_LEVELS.ADMIN}
           >
             <SquarePen size="18" />
           </ActionIcon>
@@ -150,6 +159,7 @@ const ChannelRowActions = React.memo(
             variant="transparent"
             color={theme.tailwind.red[6]}
             onClick={onDelete}
+            disabled={authUser.user_level != USER_LEVELS.ADMIN}
           >
             <SquareMinus size="18" />
           </ActionIcon>
@@ -181,6 +191,7 @@ const ChannelRowActions = React.memo(
               </Menu.Item>
               <Menu.Item
                 onClick={onRecord}
+                disabled={authUser.user_level != USER_LEVELS.ADMIN}
                 leftSection={
                   <div
                     style={{
@@ -261,6 +272,7 @@ const ChannelsTable = ({ }) => {
    */
   const [channel, setChannel] = useState(null);
   const [channelModalOpen, setChannelModalOpen] = useState(false);
+  const [channelBatchModalOpen, setChannelBatchModalOpen] = useState(false);
   const [recordingModalOpen, setRecordingModalOpen] = useState(false);
   const [selectedProfile, setSelectedProfile] = useState(
     profiles[selectedProfileId]
@@ -274,13 +286,24 @@ const ChannelsTable = ({ }) => {
   const [isLoading, setIsLoading] = useState(true);
 
   const [hdhrUrl, setHDHRUrl] = useState(hdhrUrlBase);
-  const [epgUrl, setEPGUrl] = useState(epgUrlBase);
-  const [m3uUrl, setM3UUrl] = useState(m3uUrlBase);
+  const [epgUrl, setEPGUrl] = useState(epgUrlBase); const [m3uUrl, setM3UUrl] = useState(m3uUrlBase);
 
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [isBulkDelete, setIsBulkDelete] = useState(false);
   const [channelToDelete, setChannelToDelete] = useState(null);
+
+  // M3U and EPG URL configuration state
+  const [m3uParams, setM3uParams] = useState({
+    cachedlogos: true,
+    direct: false,
+    tvg_id_source: 'channel_number'
+  });
+  const [epgParams, setEpgParams] = useState({
+    cachedlogos: true,
+    tvg_id_source: 'channel_number',
+    days: 0
+  });
 
   /**
    * Dereived variables
@@ -291,7 +314,12 @@ const ChannelsTable = ({ }) => {
   const groupOptions = Object.values(channelGroups)
     .filter((group) => activeGroupIds.has(group.id))
     .map((group) => group.name);
-  const debouncedFilters = useDebounce(filters, 500);
+  const debouncedFilters = useDebounce(filters, 500, () => {
+    setPagination({
+      ...pagination,
+      pageIndex: 0,
+    });
+  });
 
   /**
    * Functions
@@ -329,14 +357,8 @@ const ChannelsTable = ({ }) => {
     e.stopPropagation();
   }, []);
 
-  // Remove useCallback to ensure we're using the latest setPagination function
   const handleFilterChange = (e) => {
     const { name, value } = e.target;
-    // First reset pagination to page 0
-    setPagination({
-      ...pagination,
-      pageIndex: 0,
-    });
     // Then update filters
     setFilters((prev) => ({
       ...prev,
@@ -345,11 +367,6 @@ const ChannelsTable = ({ }) => {
   };
 
   const handleGroupChange = (value) => {
-    // First reset pagination to page 0
-    setPagination({
-      ...pagination,
-      pageIndex: 0,
-    });
     // Then update filters
     setFilters((prev) => ({
       ...prev,
@@ -358,8 +375,24 @@ const ChannelsTable = ({ }) => {
   };
 
   const editChannel = async (ch = null) => {
-    setChannel(ch);
-    setChannelModalOpen(true);
+    // Use table's selected state instead of store state to avoid stale selections
+    const currentSelection = table ? table.selectedTableIds : [];
+    console.log('editChannel called with:', { ch, currentSelection, tableExists: !!table });
+
+    if (currentSelection.length > 1) {
+      setChannelBatchModalOpen(true);
+    } else {
+      // If no channel object is passed but we have a selection, get the selected channel
+      let channelToEdit = ch;
+      if (!channelToEdit && currentSelection.length === 1) {
+        const selectedId = currentSelection[0];
+
+        // Use table data since that's what's currently displayed
+        channelToEdit = data.find(d => d.id === selectedId);
+      }
+      setChannel(channelToEdit);
+      setChannelModalOpen(true);
+    }
   };
 
   const deleteChannel = async (id) => {
@@ -473,6 +506,10 @@ const ChannelsTable = ({ }) => {
     });
   };
 
+  const closeChannelBatchForm = () => {
+    setChannelBatchModalOpen(false);
+  };
+
   const closeChannelForm = () => {
     setChannel(null);
     setChannelModalOpen(false);
@@ -503,16 +540,47 @@ const ChannelsTable = ({ }) => {
       }
     }
   };
+  // Build URLs with parameters
+  const buildM3UUrl = () => {
+    const params = new URLSearchParams();
+    if (!m3uParams.cachedlogos) params.append('cachedlogos', 'false');
+    if (m3uParams.direct) params.append('direct', 'true');
+    if (m3uParams.tvg_id_source !== 'channel_number') params.append('tvg_id_source', m3uParams.tvg_id_source);
 
+    const baseUrl = m3uUrl;
+    return params.toString() ? `${baseUrl}?${params.toString()}` : baseUrl;
+  };
+
+  const buildEPGUrl = () => {
+    const params = new URLSearchParams();
+    if (!epgParams.cachedlogos) params.append('cachedlogos', 'false');
+    if (epgParams.tvg_id_source !== 'channel_number') params.append('tvg_id_source', epgParams.tvg_id_source);
+    if (epgParams.days > 0) params.append('days', epgParams.days.toString());
+
+    const baseUrl = epgUrl;
+    return params.toString() ? `${baseUrl}?${params.toString()}` : baseUrl;
+  };
   // Example copy URLs
   const copyM3UUrl = () => {
-    copyToClipboard(m3uUrl);
+    copyToClipboard(buildM3UUrl());
+    notifications.show({
+      title: 'M3U URL Copied!',
+      message: 'The M3U URL has been copied to your clipboard.',
+    });
   };
   const copyEPGUrl = () => {
-    copyToClipboard(epgUrl);
+    copyToClipboard(buildEPGUrl());
+    notifications.show({
+      title: 'EPG URL Copied!',
+      message: 'The EPG URL has been copied to your clipboard.',
+    });
   };
   const copyHDHRUrl = () => {
     copyToClipboard(hdhrUrl);
+    notifications.show({
+      title: 'HDHR URL Copied!',
+      message: 'The HDHR URL has been copied to your clipboard.',
+    });
   };
 
   const onSortingChange = (column) => {
@@ -555,7 +623,7 @@ const ChannelsTable = ({ }) => {
     setHDHRUrl(`${hdhrUrlBase}${profileString}`);
     setEPGUrl(`${epgUrlBase}${profileString}`);
     setM3UUrl(`${m3uUrlBase}${profileString}`);
-  }, [selectedProfileId]);
+  }, [selectedProfileId, profiles]);
 
   useEffect(() => {
     const startItem = pagination.pageIndex * pagination.pageSize + 1; // +1 to start from 1, not 0
@@ -564,7 +632,7 @@ const ChannelsTable = ({ }) => {
       totalCount
     );
     setPaginationString(`${startItem} to ${endItem} of ${totalCount}`);
-  }, [data]);
+  }, [pagination.pageIndex, pagination.pageSize, totalCount]);
 
   const columns = useMemo(
     () => [
@@ -596,8 +664,12 @@ const ChannelsTable = ({ }) => {
         cell: ({ getValue }) => {
           const value = getValue();
           // Format as integer if no decimal component
-          const formattedValue = value !== null && value !== undefined ?
-            (value === Math.floor(value) ? Math.floor(value) : value) : '';
+          const formattedValue =
+            value !== null && value !== undefined
+              ? value === Math.floor(value)
+                ? Math.floor(value)
+                : value
+              : '';
 
           return (
             <Flex justify="flex-end" style={{ width: '100%' }}>
@@ -845,9 +917,8 @@ const ChannelsTable = ({ }) => {
             >
               Links:
             </Text>
-
             <Group gap={5} style={{ paddingLeft: 10 }}>
-              <Popover withArrow shadow="md">
+              <Popover withArrow shadow="md" zIndex={1000} position="bottom-start" withinPortal>
                 <Popover.Target>
                   <Button
                     leftSection={<Tv2 size={18} />}
@@ -864,7 +935,14 @@ const ChannelsTable = ({ }) => {
                   </Button>
                 </Popover.Target>
                 <Popover.Dropdown>
-                  <Group>
+                  <Group
+                    gap="sm"
+                    style={{
+                      minWidth: 250,
+                      maxWidth: 'min(400px, 80vw)',
+                      width: 'max-content'
+                    }}
+                  >
                     <TextInput value={hdhrUrl} size="small" readOnly />
                     <ActionIcon
                       onClick={copyHDHRUrl}
@@ -877,8 +955,7 @@ const ChannelsTable = ({ }) => {
                   </Group>
                 </Popover.Dropdown>
               </Popover>
-
-              <Popover withArrow shadow="md">
+              <Popover withArrow shadow="md" zIndex={1000} position="bottom-start" withinPortal>
                 <Popover.Target>
                   <Button
                     leftSection={<ScreenShare size={18} />}
@@ -894,21 +971,72 @@ const ChannelsTable = ({ }) => {
                   </Button>
                 </Popover.Target>
                 <Popover.Dropdown>
-                  <Group>
-                    <TextInput value={m3uUrl} size="small" readOnly />
-                    <ActionIcon
-                      onClick={copyM3UUrl}
-                      size="sm"
-                      variant="transparent"
-                      color="gray.5"
-                    >
-                      <Copy size="18" fontSize="small" />
-                    </ActionIcon>
-                  </Group>
+                  <Stack
+                    gap="sm"
+                    style={{
+                      minWidth: 300,
+                      maxWidth: 'min(500px, 90vw)',
+                      width: 'max-content'
+                    }}
+                    onClick={stopPropagation}
+                    onMouseDown={stopPropagation}
+                  >
+                    <TextInput
+                      value={buildM3UUrl()}
+                      size="xs"
+                      readOnly
+                      label="Generated URL"
+                      rightSection={
+                        <ActionIcon
+                          onClick={copyM3UUrl}
+                          size="sm"
+                          variant="transparent"
+                          color="gray.5"
+                        >
+                          <Copy size="16" />
+                        </ActionIcon>
+                      }
+                    /><Group justify="space-between">
+                      <Text size="sm">Use cached logos</Text>
+                      <Switch
+                        size="sm"
+                        checked={m3uParams.cachedlogos}
+                        onChange={(event) => setM3uParams(prev => ({
+                          ...prev,
+                          cachedlogos: event.target.checked
+                        }))}
+                      />
+                    </Group>
+
+                    <Group justify="space-between">
+                      <Text size="sm">Direct stream URLs</Text>
+                      <Switch
+                        size="sm"
+                        checked={m3uParams.direct}
+                        onChange={(event) => setM3uParams(prev => ({
+                          ...prev,
+                          direct: event.target.checked
+                        }))}
+                      />
+                    </Group>                    <Select
+                      label="TVG-ID Source"
+                      size="xs"
+                      value={m3uParams.tvg_id_source}
+                      onChange={(value) => setM3uParams(prev => ({
+                        ...prev,
+                        tvg_id_source: value
+                      }))}
+                      comboboxProps={{ withinPortal: false }}
+                      data={[
+                        { value: 'channel_number', label: 'Channel Number' },
+                        { value: 'tvg_id', label: 'TVG-ID' },
+                        { value: 'gracenote', label: 'Gracenote Station ID' }
+                      ]}
+                    />
+                  </Stack>
                 </Popover.Dropdown>
               </Popover>
-
-              <Popover withArrow shadow="md">
+              <Popover withArrow shadow="md" zIndex={1000} position="bottom-start" withinPortal>
                 <Popover.Target>
                   <Button
                     leftSection={<Scroll size={18} />}
@@ -925,17 +1053,70 @@ const ChannelsTable = ({ }) => {
                   </Button>
                 </Popover.Target>
                 <Popover.Dropdown>
-                  <Group>
-                    <TextInput value={epgUrl} size="small" readOnly />
-                    <ActionIcon
-                      onClick={copyEPGUrl}
-                      size="sm"
-                      variant="transparent"
-                      color="gray.5"
-                    >
-                      <Copy size="18" fontSize="small" />
-                    </ActionIcon>
-                  </Group>
+                  <Stack
+                    gap="sm"
+                    style={{
+                      minWidth: 300,
+                      maxWidth: 'min(450px, 85vw)',
+                      width: 'max-content'
+                    }}
+                    onClick={stopPropagation}
+                    onMouseDown={stopPropagation}
+                  >
+                    <TextInput
+                      value={buildEPGUrl()}
+                      size="xs"
+                      readOnly
+                      label="Generated URL"
+                      rightSection={
+                        <ActionIcon
+                          onClick={copyEPGUrl}
+                          size="sm"
+                          variant="transparent"
+                          color="gray.5"
+                        >
+                          <Copy size="16" />
+                        </ActionIcon>
+                      }
+                    />
+                    <Group justify="space-between">
+                      <Text size="sm">Use cached logos</Text>
+                      <Switch
+                        size="sm"
+                        checked={epgParams.cachedlogos}
+                        onChange={(event) => setEpgParams(prev => ({
+                          ...prev,
+                          cachedlogos: event.target.checked
+                        }))}
+                      />
+                    </Group>
+                    <Select
+                      label="TVG-ID Source"
+                      size="xs"
+                      value={epgParams.tvg_id_source}
+                      onChange={(value) => setEpgParams(prev => ({
+                        ...prev,
+                        tvg_id_source: value
+                      }))}
+                      comboboxProps={{ withinPortal: false }}
+                      data={[
+                        { value: 'channel_number', label: 'Channel Number' },
+                        { value: 'tvg_id', label: 'TVG-ID' },
+                        { value: 'gracenote', label: 'Gracenote Station ID' }
+                      ]}
+                    />
+                    <NumberInput
+                      label="Days (0 = all data)"
+                      size="xs"
+                      min={0}
+                      max={365}
+                      value={epgParams.days}
+                      onChange={(value) => setEpgParams(prev => ({
+                        ...prev,
+                        days: value || 0
+                      }))}
+                    />
+                  </Stack>
                 </Popover.Dropdown>
               </Popover>
             </Group>
@@ -947,7 +1128,7 @@ const ChannelsTable = ({ }) => {
           style={{
             display: 'flex',
             flexDirection: 'column',
-            height: 'calc(100vh - 58px)',
+            height: 'calc(100vh - 60px)',
             backgroundColor: '#27272A',
           }}
         >
@@ -956,6 +1137,7 @@ const ChannelsTable = ({ }) => {
             editChannel={editChannel}
             deleteChannels={deleteChannels}
             selectedTableIds={table.selectedTableIds}
+            table={table}
           />
 
           {/* Table or ghost empty state inside Paper */}
@@ -970,7 +1152,7 @@ const ChannelsTable = ({ }) => {
               style={{
                 display: 'flex',
                 flexDirection: 'column',
-                height: 'calc(100vh - 110px)',
+                height: 'calc(100vh - 100px)',
               }}
             >
               <Box
@@ -1028,6 +1210,12 @@ const ChannelsTable = ({ }) => {
           channel={channel}
           isOpen={channelModalOpen}
           onClose={closeChannelForm}
+        />
+
+        <ChannelBatchForm
+          channelIds={selectedChannelIds}
+          isOpen={channelBatchModalOpen}
+          onClose={closeChannelBatchForm}
         />
 
         <RecordingForm

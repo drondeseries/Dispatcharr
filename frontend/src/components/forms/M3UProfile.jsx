@@ -15,7 +15,6 @@ import {
 } from '@mantine/core';
 import { useWebSocket } from '../../WebSocket';
 import usePlaylistsStore from '../../store/playlists';
-import { useDebounce } from '../../utils';
 
 const RegexFormAndView = ({ profile = null, m3u, isOpen, onClose }) => {
   const [websocketReady, sendMessage] = useWebSocket();
@@ -139,7 +138,10 @@ const RegexFormAndView = ({ profile = null, m3u, isOpen, onClose }) => {
     if (!searchPattern || !sampleInput) return sampleInput;
     try {
       const regex = new RegExp(searchPattern, 'g');
-      return sampleInput.replace(regex, match => `<mark style="background-color: #ffee58;">${match}</mark>`);
+      return sampleInput.replace(
+        regex,
+        (match) => `<mark style="background-color: #ffee58;">${match}</mark>`
+      );
     } catch (e) {
       return sampleInput;
     }
@@ -213,10 +215,14 @@ const RegexFormAndView = ({ profile = null, m3u, isOpen, onClose }) => {
         </Flex>
       </form>
 
-      <Title order={4} mt={15} mb={10}>Live Regex Demonstration</Title>
+      <Title order={4} mt={15} mb={10}>
+        Live Regex Demonstration
+      </Title>
 
       <Paper shadow="sm" p="xs" radius="md" withBorder mb={8}>
-        <Text size="sm" weight={500} mb={3}>Sample Text</Text>
+        <Text size="sm" weight={500} mb={3}>
+          Sample Text
+        </Text>
         <TextInput
           value={sampleInput}
           onChange={handleSampleInputChange}
@@ -228,7 +234,12 @@ const RegexFormAndView = ({ profile = null, m3u, isOpen, onClose }) => {
       <Grid gutter="xs">
         <Grid.Col span={12}>
           <Paper shadow="sm" p="xs" radius="md" withBorder>
-            <Text size="sm" weight={500} mb={3}>Matched Text <Badge size="xs" color="yellow">highlighted</Badge></Text>
+            <Text size="sm" weight={500} mb={3}>
+              Matched Text{' '}
+              <Badge size="xs" color="yellow">
+                highlighted
+              </Badge>
+            </Text>
             <Text
               size="sm"
               dangerouslySetInnerHTML={{
@@ -241,8 +252,13 @@ const RegexFormAndView = ({ profile = null, m3u, isOpen, onClose }) => {
 
         <Grid.Col span={12}>
           <Paper shadow="sm" p="xs" radius="md" withBorder>
-            <Text size="sm" weight={500} mb={3}>Result After Replace</Text>
-            <Text size="sm" sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+            <Text size="sm" weight={500} mb={3}>
+              Result After Replace
+            </Text>
+            <Text
+              size="sm"
+              sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}
+            >
               {getLocalReplaceResult()}
             </Text>
           </Paper>

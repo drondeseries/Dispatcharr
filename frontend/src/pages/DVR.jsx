@@ -38,11 +38,13 @@ dayjs.extend(relativeTime);
 const RecordingCard = ({ recording }) => {
   const channels = useChannelsStore((s) => s.channels);
 
+  console.log(recording);
+
   const deleteRecording = (id) => {
     API.deleteRecording(id);
   };
 
-  const customProps = JSON.parse(recording.custom_properties);
+  const customProps = JSON.parse(recording.custom_properties || '{}');
   let recordingName = 'Custom Recording';
   if (customProps.program) {
     recordingName = customProps.program.title;
@@ -87,13 +89,13 @@ const RecordingCard = ({ recording }) => {
       <Group justify="space-between">
         <Text size="sm">Start:</Text>
         <Text size="sm">
-          {dayjs(new Date(recording.start_time)).format('MMMM D, YYYY h:MMa')}
+          {dayjs(new Date(recording.start_time)).format('MMMM D, YYYY h:mma')}
         </Text>
       </Group>
       <Group justify="space-between">
         <Text size="sm">End:</Text>
         <Text size="sm">
-          {dayjs(new Date(recording.end_time)).format('MMMM D, YYYY h:MMa')}
+          {dayjs(new Date(recording.end_time)).format('MMMM D, YYYY h:mma')}
         </Text>
       </Group>
     </Card>

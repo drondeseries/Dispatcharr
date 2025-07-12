@@ -1,6 +1,7 @@
 import { Box, Flex } from '@mantine/core';
 import { VariableSizeList as List } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
+import table from '../../../helpers/table';
 
 const CustomTableBody = ({
   getRowModel,
@@ -9,6 +10,8 @@ const CustomTableBody = ({
   renderBodyCell,
   getExpandedRowHeight,
   getRowStyles, // Add this prop to receive row styles
+  tableBodyProps,
+  tableCellProps,
 }) => {
   const renderExpandedRow = (row) => {
     if (expandedRowRenderer) {
@@ -25,7 +28,10 @@ const CustomTableBody = ({
 
     if (virtualized) {
       return (
-        <Box className="tbody" style={{ flex: 1 }}>
+        <Box
+          className="tbody"
+          style={{ flex: 1, ...(tableBodyProps && tableBodyProps()) }}
+        >
           <AutoSizer disableWidth>
             {({ height }) => {
               const getItemSize = (index) => {
@@ -105,6 +111,7 @@ const CustomTableBody = ({
                     ? cell.column.getSize()
                     : undefined,
                   minWidth: 0,
+                  ...(tableCellProps && tableCellProps({ cell })),
                 }}
               >
                 <Flex align="center" style={{ height: '100%' }}>

@@ -172,6 +172,13 @@ def fetch_m3u_lines(account, use_cache=False):
     send_m3u_update(account.id, "downloading", 100, status="error", error=error_msg)
     return [], False
 
+def get_case_insensitive_attr(attributes, key, default=""):
+    """Get attribute value using case-insensitive key lookup."""
+    for attr_key, attr_value in attributes.items():
+        if attr_key.lower() == key.lower():
+            return attr_value
+    return default
+
 def parse_extinf_line(line: str) -> dict:
     """
     Parse an EXTINF line from an M3U file.
@@ -193,7 +200,7 @@ def parse_extinf_line(line: str) -> dict:
     attributes_part, display_name = parts[0], parts[1].strip()
     attrs = dict(re.findall(r'([^\s]+)=["\']([^"\']+)["\']', attributes_part))
     # Use tvg-name attribute if available; otherwise, use the display name.
-    name = attrs.get('tvg-name', display_name)
+    name = get_case_insensitive_attr(attrs, 'tvg-name', display_name)
     return {
         'attributes': attrs,
         'display_name': display_name,
@@ -239,7 +246,7 @@ def process_groups(account, groups):
     group_objs = []
     groups_to_create = []
     for group_name, custom_props in groups.items():
-        logger.debug(f"Handling group: {group_name}")
+        logger.debug(f"Handling group for M3U account {account.id}: {group_name}")
         if (group_name not in existing_groups):
             groups_to_create.append(ChannelGroup(
                 name=group_name,
@@ -405,12 +412,12 @@ def process_m3u_batch(account_id, batch, groups, hash_keys):
     stream_hashes = {}
 
     # compiled_filters = [(f.filter_type, re.compile(f.regex_pattern, re.IGNORECASE)) for f in filters]
-    logger.debug(f"Processing batch of {len(batch)}")
+    logger.debug(f"Processing batch of {len(batch)} for M3U account {account_id}")
     for stream_info in batch:
         try:
             name, url = stream_info["name"], stream_info["url"]
-            tvg_id, tvg_logo = stream_info["attributes"].get("tvg-id", ""), stream_info["attributes"].get("tvg-logo", "")
-            group_title = stream_info["attributes"].get("group-title", "Default Group")
+            tvg_id, tvg_logo = get_case_insensitive_attr(stream_info["attributes"], "tvg-id", ""), get_case_insensitive_attr(stream_info["attributes"], "tvg-logo", "")
+            group_title = get_case_insensitive_attr(stream_info["attributes"], "group-title", "Default Group")
 
             # Filter out disabled groups for this account
             if group_title not in groups:
@@ -487,7 +494,7 @@ def process_m3u_batch(account_id, batch, groups, hash_keys):
     except Exception as e:
         logger.error(f"Bulk create failed: {str(e)}")
 
-    retval = f"Batch processed: {len(streams_to_create)} created, {len(streams_to_update)} updated."
+    retval = f"M3U account: {account_id}, Batch processed: {len(streams_to_create)} created, {len(streams_to_update)} updated."
 
     # Aggressive garbage collection
     #del streams_to_create, streams_to_update, stream_hashes, existing_streams
@@ -496,17 +503,17 @@ def process_m3u_batch(account_id, batch, groups, hash_keys):
 
     return retval
 
-def cleanup_streams(account_id):
+def cleanup_streams(account_id, scan_start_time=timezone.now):
     account = M3UAccount.objects.get(id=account_id, is_active=True)
     existing_groups = ChannelGroup.objects.filter(
         m3u_account__m3u_account=account,
         m3u_account__enabled=True,
     ).values_list('id', flat=True)
-    logger.info(f"Found {len(existing_groups)} active groups")
+    logger.info(f"Found {len(existing_groups)} active groups for M3U account {account_id}")
 
     # Calculate cutoff date for stale streams
-    stale_cutoff = timezone.now() - timezone.timedelta(days=account.stale_stream_days)
-    logger.info(f"Removing streams not seen since {stale_cutoff}")
+    stale_cutoff = scan_start_time - timezone.timedelta(days=account.stale_stream_days)
+    logger.info(f"Removing streams not seen since {stale_cutoff} for M3U account {account_id}")
 
     # Delete streams that are not in active groups
     streams_to_delete = Stream.objects.filter(
@@ -527,7 +534,11 @@ def cleanup_streams(account_id):
     streams_to_delete.delete()
     stale_streams.delete()
 
-    logger.info(f"Cleanup complete: {deleted_count} streams removed due to group filter, {stale_count} removed as stale")
+    total_deleted = deleted_count + stale_count
+    logger.info(f"Cleanup for M3U account {account_id} complete: {deleted_count} streams removed due to group filter, {stale_count} removed as stale")
+
+    # Return the total count of deleted streams
+    return total_deleted
 
 @shared_task
 def refresh_m3u_groups(account_id, use_cache=False, full_refresh=False):
@@ -708,11 +719,12 @@ def refresh_m3u_groups(account_id, use_cache=False, full_refresh=False):
                 extinf_count += 1
                 parsed = parse_extinf_line(line)
                 if parsed:
-                    if "group-title" in parsed["attributes"]:
-                        group_name = parsed["attributes"]["group-title"]
+                    group_title_attr = get_case_insensitive_attr(parsed["attributes"], "group-title", "")
+                    if group_title_attr:
+                        group_name = group_title_attr
                         # Log new groups as they're discovered
                         if group_name not in groups:
-                            logger.debug(f"Found new group: '{group_name}'")
+                            logger.debug(f"Found new group for M3U account {account_id}: '{group_name}'")
                         groups[group_name] = {}
 
                     extinf_data.append(parsed)
@@ -729,7 +741,7 @@ def refresh_m3u_groups(account_id, use_cache=False, full_refresh=False):
 
                 # Periodically log progress for large files
                 if valid_stream_count % 1000 == 0:
-                    logger.debug(f"Processed {valid_stream_count} valid streams so far...")
+                    logger.debug(f"Processed {valid_stream_count} valid streams so far for M3U account: {account_id}")
 
         # Log summary statistics
         logger.info(f"M3U parsing complete - Lines: {line_count}, EXTINF: {extinf_count}, URLs: {url_count}, Valid streams: {valid_stream_count}")
@@ -833,7 +845,8 @@ def refresh_single_m3u_account(account_id):
         return f"Task already running for account_id={account_id}."
 
     # Record start time
-    start_time = time.time()
+    refresh_start_timestamp = timezone.now()  # For the cleanup function
+    start_time = time.time()  # For tracking elapsed time as float
     streams_created = 0
     streams_updated = 0
     streams_deleted = 0
@@ -962,7 +975,7 @@ def refresh_single_m3u_account(account_id):
         account.save(update_fields=['status'])
 
         if account.account_type == M3UAccount.Types.STADNARD:
-            logger.debug(f"Processing Standard account with groups: {existing_groups}")
+            logger.debug(f"Processing Standard account ({account_id}) with groups: {existing_groups}")
             # Break into batches and process in parallel
             batches = [extinf_data[i:i + BATCH_SIZE] for i in range(0, len(extinf_data), BATCH_SIZE)]
             task_group = group(process_m3u_batch.s(account_id, batch, existing_groups, hash_keys) for batch in batches)
@@ -1077,7 +1090,7 @@ def refresh_single_m3u_account(account_id):
         Stream.objects.filter(id=-1).exists()  # This will never find anything but ensures DB sync
 
         # Now run cleanup
-        cleanup_streams(account_id)
+        streams_deleted = cleanup_streams(account_id, refresh_start_timestamp)
 
         # Calculate elapsed time
         elapsed_time = time.time() - start_time
@@ -1106,8 +1119,6 @@ def refresh_single_m3u_account(account_id):
             streams_deleted=streams_deleted,
             message=account.last_message
         )
-
-        print(f"Function took {elapsed_time} seconds to execute.")
 
     except Exception as e:
         logger.error(f"Error processing M3U for account {account_id}: {str(e)}")

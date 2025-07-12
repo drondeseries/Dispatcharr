@@ -1,26 +1,26 @@
 # core/models.py
 from django.db import models
 from django.utils.text import slugify
+from django.core.exceptions import ValidationError
+
 
 class UserAgent(models.Model):
     name = models.CharField(
-        max_length=512,
-        unique=True,
-        help_text="The User-Agent name."
+        max_length=512, unique=True, help_text="The User-Agent name."
     )
     user_agent = models.CharField(
         max_length=512,
         unique=True,
-        help_text="The complete User-Agent string sent by the client."
+        help_text="The complete User-Agent string sent by the client.",
     )
     description = models.CharField(
         max_length=255,
         blank=True,
-        help_text="An optional description of the client or device type."
+        help_text="An optional description of the client or device type.",
     )
     is_active = models.BooleanField(
         default=True,
-        help_text="Whether this user agent is currently allowed/recognized."
+        help_text="Whether this user agent is currently allowed/recognized.",
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -28,31 +28,34 @@ class UserAgent(models.Model):
     def __str__(self):
         return self.name
 
-PROXY_PROFILE_NAME = 'Proxy'
-REDIRECT_PROFILE_NAME = 'Redirect'
+
+PROXY_PROFILE_NAME = "Proxy"
+REDIRECT_PROFILE_NAME = "Redirect"
+
 
 class StreamProfile(models.Model):
     name = models.CharField(max_length=255, help_text="Name of the stream profile")
     command = models.CharField(
         max_length=255,
         help_text="Command to execute (e.g., 'yt.sh', 'streamlink', or 'vlc')",
-        blank=True
+        blank=True,
     )
     parameters = models.TextField(
         help_text="Command-line parameters. Use {userAgent} and {streamUrl} as placeholders.",
-        blank=True
+        blank=True,
     )
     locked = models.BooleanField(
-        default=False,
-        help_text="Protected - can't be deleted or modified"
+        default=False, help_text="Protected - can't be deleted or modified"
     )
-    is_active = models.BooleanField(default=True, help_text="Whether this profile is active")
+    is_active = models.BooleanField(
+        default=True, help_text="Whether this profile is active"
+    )
     user_agent = models.ForeignKey(
         "UserAgent",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        help_text="Optional user agent to use. If not set, you can fall back to a default."
+        help_text="Optional user agent to use. If not set, you can fall back to a default.",
     )
 
     def __str__(self):
@@ -77,7 +80,9 @@ class StreamProfile(models.Model):
                         new_value = new_value.pk
 
                     if field_name not in allowed_fields and orig_value != new_value:
-                        raise ValidationError(f"Cannot modify {field_name} on a protected profile.")
+                        raise ValidationError(
+                            f"Cannot modify {field_name} on a protected profile."
+                        )
 
         super().save(*args, **kwargs)
 
@@ -90,10 +95,14 @@ class StreamProfile(models.Model):
 
             for field_name, new_value in kwargs.items():
                 if field_name not in allowed_fields:
-                    raise ValidationError(f"Cannot modify {field_name} on a protected profile.")
+                    raise ValidationError(
+                        f"Cannot modify {field_name} on a protected profile."
+                    )
 
                 # Ensure user_agent ForeignKey updates correctly
-                if field_name == "user_agent" and isinstance(new_value, cls._meta.get_field("user_agent").related_model):
+                if field_name == "user_agent" and isinstance(
+                    new_value, cls._meta.get_field("user_agent").related_model
+                ):
                     new_value = new_value.pk  # Convert object to ID if needed
 
                 setattr(instance, field_name, new_value)
@@ -122,7 +131,8 @@ class StreamProfile(models.Model):
 
         # Split the command and iterate through each part to apply replacements
         cmd = [self.command] + [
-            self._replace_in_part(part, replacements) for part in self.parameters.split()
+            self._replace_in_part(part, replacements)
+            for part in self.parameters.split()
         ]
 
         return cmd
@@ -134,11 +144,14 @@ class StreamProfile(models.Model):
         return part
 
 
-DEFAULT_USER_AGENT_KEY= slugify("Default User-Agent")
+DEFAULT_USER_AGENT_KEY = slugify("Default User-Agent")
 DEFAULT_STREAM_PROFILE_KEY = slugify("Default Stream Profile")
 STREAM_HASH_KEY = slugify("M3U Hash Key")
 PREFERRED_REGION_KEY = slugify("Preferred Region")
 AUTO_IMPORT_MAPPED_FILES = slugify("Auto-Import Mapped Files")
+NETWORK_ACCESS = slugify("Network Access")
+PROXY_SETTINGS_KEY = slugify("Proxy Settings")
+
 
 class CoreSettings(models.Model):
     key = models.CharField(
@@ -183,3 +196,20 @@ class CoreSettings(models.Model):
             return cls.objects.get(key=AUTO_IMPORT_MAPPED_FILES).value
         except cls.DoesNotExist:
             return None
+
+    @classmethod
+    def get_proxy_settings(cls):
+        """Retrieve proxy settings as dict (or return defaults if not found)."""
+        try:
+            import json
+            settings_json = cls.objects.get(key=PROXY_SETTINGS_KEY).value
+            return json.loads(settings_json)
+        except (cls.DoesNotExist, json.JSONDecodeError):
+            # Return defaults if not found or invalid JSON
+            return {
+                "buffering_timeout": 15,
+                "buffering_speed": 1.0,
+                "redis_chunk_ttl": 60,
+                "channel_shutdown_delay": 0,
+                "channel_init_grace_period": 5,
+            }

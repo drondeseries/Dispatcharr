@@ -152,14 +152,18 @@ const useChannelsStore = create((set, get) => ({
     })),
 
   updateChannels: (channels) => {
-    const channelsByUUID = {};
+    // Ensure channels is an array
+    if (!Array.isArray(channels)) {
+      console.error('updateChannels expects an array, received:', typeof channels, channels);
+      return;
+    } const channelsByUUID = {};
     const updatedChannels = channels.reduce((acc, chan) => {
-      channelsByUUID[chan.uuid] = chan;
+      channelsByUUID[chan.uuid] = chan.id;
       acc[chan.id] = chan;
       return acc;
     }, {});
 
-    return set((state) => ({
+    set((state) => ({
       channels: {
         ...state.channels,
         ...updatedChannels,

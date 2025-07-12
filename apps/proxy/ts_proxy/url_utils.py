@@ -17,7 +17,6 @@ logger = get_logger()
 
 def get_stream_object(id: str):
     try:
-        uuid_obj = UUID(id, version=4)
         logger.info(f"Fetching channel ID {id}")
         return get_object_or_404(Channel, uuid=id)
     except:
@@ -126,7 +125,10 @@ def get_stream_info_for_switch(channel_id: str, target_stream_id: Optional[int] 
         dict: Stream information including URL, user agent and transcode flag
     """
     try:
+        from core.utils import RedisClient
+
         channel = get_object_or_404(Channel, uuid=channel_id)
+        redis_client = RedisClient.get_client()
 
         # Use the target stream if specified, otherwise use current stream
         if target_stream_id:
@@ -135,24 +137,62 @@ def get_stream_info_for_switch(channel_id: str, target_stream_id: Optional[int] 
             # Get the stream object
             stream = get_object_or_404(Stream, pk=stream_id)
 
-            # Find compatible profile for this stream
-            profiles = M3UAccountProfile.objects.filter(m3u_account=stream.m3u_account)
+            # Find compatible profile for this stream with connection availability check
+            m3u_account = stream.m3u_account
+            if not m3u_account:
+                return {'error': 'Stream has no M3U account'}
 
-            if not profiles.exists():
-                # Try to get default profile
-                default_profile = M3UAccountProfile.objects.filter(
-                    m3u_account=stream.m3u_account,
-                    is_default=True
-                ).first()
+            m3u_profiles = m3u_account.profiles.all()
+            default_profile = next((obj for obj in m3u_profiles if obj.is_default), None)
 
-                if default_profile:
-                    m3u_profile_id = default_profile.id
+            if not default_profile:
+                return {'error': 'M3U account has no default profile'}
+
+            # Check profiles in order: default first, then others
+            profiles = [default_profile] + [obj for obj in m3u_profiles if not obj.is_default]
+
+            selected_profile = None
+            for profile in profiles:
+                # Skip inactive profiles
+                if not profile.is_active:
+                    logger.debug(f"Skipping inactive profile {profile.id}")
+                    continue
+
+                # Check connection availability
+                if redis_client:
+                    profile_connections_key = f"profile_connections:{profile.id}"
+                    current_connections = int(redis_client.get(profile_connections_key) or 0)
+
+                    # Check if this channel is already using this profile
+                    channel_using_profile = False
+                    existing_stream_id = redis_client.get(f"channel_stream:{channel.id}")
+                    if existing_stream_id:
+                        # Decode bytes to string/int for proper Redis key lookup
+                        existing_stream_id = existing_stream_id.decode('utf-8')
+                        existing_profile_id = redis_client.get(f"stream_profile:{existing_stream_id}")
+                        if existing_profile_id and int(existing_profile_id.decode('utf-8')) == profile.id:
+                            channel_using_profile = True
+                            logger.debug(f"Channel {channel.id} already using profile {profile.id}")
+
+                    # Calculate effective connections (subtract 1 if channel already using this profile)
+                    effective_connections = current_connections - (1 if channel_using_profile else 0)
+
+                    # Check if profile has available slots
+                    if profile.max_streams == 0 or effective_connections < profile.max_streams:
+                        selected_profile = profile
+                        logger.debug(f"Selected profile {profile.id} with {effective_connections}/{profile.max_streams} effective connections (current: {current_connections}, already using: {channel_using_profile})")
+                        break
+                    else:
+                        logger.debug(f"Profile {profile.id} at max connections: {effective_connections}/{profile.max_streams} (current: {current_connections}, already using: {channel_using_profile})")
                 else:
-                    logger.error(f"No profile found for stream {stream_id}")
-                    return {'error': 'No profile found for stream'}
-            else:
-                # Use first available profile
-                m3u_profile_id = profiles.first().id
+                    # No Redis available, assume first active profile is okay
+                    selected_profile = profile
+                    break
+
+            if not selected_profile:
+                return {'error': 'No profiles available with connection capacity'}
+
+            m3u_profile_id = selected_profile.id
         else:
             stream_id, m3u_profile_id, error_reason = channel.get_stream()
             if stream_id is None or m3u_profile_id is None:
@@ -162,8 +202,15 @@ def get_stream_info_for_switch(channel_id: str, target_stream_id: Optional[int] 
         stream = get_object_or_404(Stream, pk=stream_id)
         profile = get_object_or_404(M3UAccountProfile, pk=m3u_profile_id)
 
-        # Get the user agent from the M3U account
+        # Check connections left
         m3u_account = M3UAccount.objects.get(id=profile.m3u_account.id)
+        #connections_left = get_connections_left(m3u_profile_id)
+
+        #if connections_left <= 0:
+            #logger.warning(f"No connections left for M3U account {m3u_account.id}")
+            #return {'error': 'No connections left'}
+
+        # Get the user agent from the M3U account
         user_agent = m3u_account.get_user_agent().user_agent
 
         # Generate URL using the transform function directly
@@ -172,7 +219,7 @@ def get_stream_info_for_switch(channel_id: str, target_stream_id: Optional[int] 
         # Get transcode info from the channel's stream profile
         stream_profile = channel.get_stream_profile()
         transcode = not (stream_profile.is_proxy() or stream_profile is None)
-        profile_value = str(stream_profile)
+        profile_value = stream_profile.id
 
         return {
             'url': stream_url,
@@ -198,15 +245,18 @@ def get_alternate_streams(channel_id: str, current_stream_id: Optional[int] = No
         List[dict]: List of stream information dictionaries with stream_id and profile_id
     """
     try:
+        from core.utils import RedisClient
+
         # Get channel object
         channel = get_stream_object(channel_id)
         if isinstance(channel, Stream):
             logger.error(f"Stream is not a channel")
             return []
 
+        redis_client = RedisClient.get_client()
         logger.debug(f"Looking for alternate streams for channel {channel_id}, current stream ID: {current_stream_id}")
 
-        # Get all assigned streams for this channel using the correct ordering from the channelstream table
+        # Get all assigned streams for this channel using the correct ordering
         streams = channel.streams.all().order_by('channelstream__order')
         logger.debug(f"Channel {channel_id} has {streams.count()} total assigned streams")
 
@@ -218,7 +268,6 @@ def get_alternate_streams(channel_id: str, current_stream_id: Optional[int] = No
 
         # Process each stream in the user-defined order
         for stream in streams:
-            # Log each stream we're checking
             logger.debug(f"Checking stream ID {stream.id} ({stream.name}) for channel {channel_id}")
 
             # Skip the current failing stream
@@ -226,44 +275,79 @@ def get_alternate_streams(channel_id: str, current_stream_id: Optional[int] = No
                 logger.debug(f"Skipping current stream ID {current_stream_id}")
                 continue
 
-            # Find compatible profiles for this stream
+            # Find compatible profiles for this stream with connection checking
             try:
-                # Check if we can find profiles via m3u_account
-                profiles = M3UAccountProfile.objects.filter(m3u_account=stream.m3u_account)
-                if not profiles.exists():
-                    logger.debug(f"No profiles found via m3u_account for stream {stream.id}")
-                    # Fallback to the default profile of the account
-                    default_profile = M3UAccountProfile.objects.filter(
-                        m3u_account=stream.m3u_account,
-                        is_default=True
-                    ).first()
-                    if default_profile:
-                        profiles = [default_profile]
-                    else:
-                        logger.warning(f"No default profile found for m3u_account {stream.m3u_account.id}")
+                m3u_account = stream.m3u_account
+                if not m3u_account:
+                    logger.debug(f"Stream {stream.id} has no M3U account")
+                    continue
+
+                m3u_profiles = m3u_account.profiles.all()
+                default_profile = next((obj for obj in m3u_profiles if obj.is_default), None)
+
+                if not default_profile:
+                    logger.debug(f"M3U account {m3u_account.id} has no default profile")
+                    continue
+
+                # Check profiles in order with connection availability
+                profiles = [default_profile] + [obj for obj in m3u_profiles if not obj.is_default]
+
+                selected_profile = None
+                for profile in profiles:
+                    # Skip inactive profiles
+                    if not profile.is_active:
+                        logger.debug(f"Skipping inactive profile {profile.id}")
                         continue
 
-                # Get first compatible profile
-                profile = profiles.first()
-                if profile:
-                    logger.debug(f"Found compatible profile ID {profile.id} for stream ID {stream.id}")
+                    # Check connection availability
+                    if redis_client:
+                        profile_connections_key = f"profile_connections:{profile.id}"
+                        current_connections = int(redis_client.get(profile_connections_key) or 0)
 
+                        # Check if this channel is already using this profile
+                        channel_using_profile = False
+                        existing_stream_id = redis_client.get(f"channel_stream:{channel.id}")
+                        if existing_stream_id:
+                            # Decode bytes to string/int for proper Redis key lookup
+                            existing_stream_id = existing_stream_id.decode('utf-8')
+                            existing_profile_id = redis_client.get(f"stream_profile:{existing_stream_id}")
+                            if existing_profile_id and int(existing_profile_id.decode('utf-8')) == profile.id:
+                                channel_using_profile = True
+                                logger.debug(f"Channel {channel.id} already using profile {profile.id}")
+
+                        # Calculate effective connections (subtract 1 if channel already using this profile)
+                        effective_connections = current_connections - (1 if channel_using_profile else 0)
+
+                        # Check if profile has available slots
+                        if profile.max_streams == 0 or effective_connections < profile.max_streams:
+                            selected_profile = profile
+                            logger.debug(f"Found available profile {profile.id} for stream {stream.id}: {effective_connections}/{profile.max_streams} effective (current: {current_connections}, already using: {channel_using_profile})")
+                            break
+                        else:
+                            logger.debug(f"Profile {profile.id} at max connections: {effective_connections}/{profile.max_streams} (current: {current_connections}, already using: {channel_using_profile})")
+                    else:
+                        # No Redis available, assume first active profile is okay
+                        selected_profile = profile
+                        break
+
+                if selected_profile:
                     alternate_streams.append({
                         'stream_id': stream.id,
-                        'profile_id': profile.id,
+                        'profile_id': selected_profile.id,
                         'name': stream.name
                     })
                 else:
-                    logger.debug(f"No compatible profile found for stream ID {stream.id}")
+                    logger.debug(f"No available profiles for stream ID {stream.id}")
+
             except Exception as inner_e:
                 logger.error(f"Error finding profiles for stream {stream.id}: {inner_e}")
                 continue
 
         if alternate_streams:
             stream_ids = ', '.join([str(s['stream_id']) for s in alternate_streams])
-            logger.info(f"Found {len(alternate_streams)} alternate streams for channel {channel_id}: [{stream_ids}]")
+            logger.info(f"Found {len(alternate_streams)} alternate streams with available connections for channel {channel_id}: [{stream_ids}]")
         else:
-            logger.warning(f"No alternate streams found for channel {channel_id}")
+            logger.warning(f"No alternate streams with available connections found for channel {channel_id}")
 
         return alternate_streams
     except Exception as e:
@@ -381,3 +465,47 @@ def validate_stream_url(url, user_agent=None, timeout=(5, 5)):
     finally:
         if 'session' in locals():
             session.close()
+
+def get_connections_left(m3u_profile_id: int) -> int:
+    """
+    Get the number of available connections left for an M3U profile.
+
+    Args:
+        m3u_profile_id: The ID of the M3U profile
+
+    Returns:
+        int: Number of connections available (0 if none available)
+    """
+    try:
+        from core.utils import RedisClient
+
+        # Get the M3U profile
+        m3u_profile = M3UAccountProfile.objects.get(id=m3u_profile_id)
+
+        # If max_streams is 0, it means unlimited
+        if m3u_profile.max_streams == 0:
+            return 999999  # Return a large number to indicate unlimited
+
+        # Get Redis client
+        redis_client = RedisClient.get_client()
+        if not redis_client:
+            logger.warning("Redis not available, assuming connections available")
+            return max(0, m3u_profile.max_streams - 1)  # Conservative estimate
+
+        # Check current connections for this specific profile
+        profile_connections_key = f"profile_connections:{m3u_profile_id}"
+        current_connections = int(redis_client.get(profile_connections_key) or 0)
+
+        # Calculate available connections
+        connections_left = max(0, m3u_profile.max_streams - current_connections)
+
+        logger.debug(f"M3U profile {m3u_profile_id}: {current_connections}/{m3u_profile.max_streams} used, {connections_left} available")
+
+        return connections_left
+
+    except M3UAccountProfile.DoesNotExist:
+        logger.error(f"M3U profile {m3u_profile_id} not found")
+        return 0
+    except Exception as e:
+        logger.error(f"Error getting connections left for M3U profile {m3u_profile_id}: {e}")
+        return 0

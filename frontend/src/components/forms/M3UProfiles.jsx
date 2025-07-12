@@ -1,7 +1,9 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import API from '../../api';
 import M3UProfile from './M3UProfile';
 import usePlaylistsStore from '../../store/playlists';
+import ConfirmationDialog from '../ConfirmationDialog';
+import useWarningsStore from '../../store/warnings';
 import {
   Card,
   Checkbox,
@@ -23,10 +25,15 @@ const M3UProfiles = ({ playlist = null, isOpen, onClose }) => {
   const theme = useMantineTheme();
 
   const allProfiles = usePlaylistsStore((s) => s.profiles);
+  const isWarningSuppressed = useWarningsStore((s) => s.isWarningSuppressed);
+  const suppressWarning = useWarningsStore((s) => s.suppressWarning);
 
   const [profileEditorOpen, setProfileEditorOpen] = useState(false);
   const [profile, setProfile] = useState(null);
   const [profiles, setProfiles] = useState([]);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [profileToDelete, setProfileToDelete] = useState(null);
 
   useEffect(() => {
     try {
@@ -50,13 +57,30 @@ const M3UProfiles = ({ playlist = null, isOpen, onClose }) => {
 
     setProfileEditorOpen(true);
   };
-
   const deleteProfile = async (id) => {
+    if (!playlist || !playlist.id) return;
+
+    // Get profile details for the confirmation dialog
+    const profileObj = profiles.find(p => p.id === id);
+    setProfileToDelete(profileObj);
+    setDeleteTarget(id);
+
+    // Skip warning if it's been suppressed
+    if (isWarningSuppressed('delete-profile')) {
+      return executeDeleteProfile(id);
+    }
+
+    setConfirmDeleteOpen(true);
+  };
+
+  const executeDeleteProfile = async (id) => {
     if (!playlist || !playlist.id) return;
     try {
       await API.deleteM3UProfile(playlist.id, id);
+      setConfirmDeleteOpen(false);
     } catch (error) {
       console.error('Error deleting profile:', error);
+      setConfirmDeleteOpen(false);
     }
   };
 
@@ -171,13 +195,37 @@ const M3UProfiles = ({ playlist = null, isOpen, onClose }) => {
             New
           </Button>
         </Flex>
-      </Modal>
-
-      <M3UProfile
+      </Modal>      <M3UProfile
         m3u={playlist}
         profile={profile}
         isOpen={profileEditorOpen}
         onClose={closeEditor}
+      />
+
+      <ConfirmationDialog
+        opened={confirmDeleteOpen}
+        onClose={() => setConfirmDeleteOpen(false)}
+        onConfirm={() => executeDeleteProfile(deleteTarget)}
+        title="Confirm Profile Deletion"
+        message={
+          profileToDelete ? (
+            <div style={{ whiteSpace: 'pre-line' }}>
+              {`Are you sure you want to delete the following profile?
+
+Name: ${profileToDelete.name}
+Max Streams: ${profileToDelete.max_streams}
+
+This action cannot be undone.`}
+            </div>
+          ) : (
+            'Are you sure you want to delete this profile? This action cannot be undone.'
+          )
+        }
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        actionKey="delete-profile"
+        onSuppressChange={suppressWarning}
+        size="md"
       />
     </>
   );

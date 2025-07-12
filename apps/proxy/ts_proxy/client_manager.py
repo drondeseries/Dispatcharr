@@ -4,6 +4,7 @@ import threading
 import logging
 import time
 import json
+import gevent
 from typing import Set, Optional
 from apps.proxy.config import TSConfig as Config
 from redis.exceptions import ConnectionError, TimeoutError
@@ -46,7 +47,7 @@ class ClientManager:
             while True:
                 try:
                     # Wait for the interval
-                    time.sleep(self.heartbeat_interval)
+                    gevent.sleep(self.heartbeat_interval)
 
                     # Send heartbeat for all local clients
                     with self.lock:
@@ -54,13 +55,35 @@ class ClientManager:
                             # No clients left, increment our counter
                             no_clients_count += 1
 
-                            # If we've seen no clients for several consecutive checks, exit the thread
-                            if no_clients_count >= max_empty_cycles:
-                                logger.info(f"No clients for channel {self.channel_id} after {no_clients_count} consecutive checks, exiting heartbeat thread")
+                            # Check if we're in a shutdown delay period before exiting
+                            in_shutdown_delay = False
+                            if self.redis_client:
+                                try:
+                                    disconnect_key = RedisKeys.last_client_disconnect(self.channel_id)
+                                    disconnect_time_bytes = self.redis_client.get(disconnect_key)
+                                    if disconnect_time_bytes:
+                                        disconnect_time = float(disconnect_time_bytes.decode('utf-8'))
+                                        elapsed = time.time() - disconnect_time
+                                        shutdown_delay = ConfigHelper.channel_shutdown_delay()
+
+                                        if elapsed < shutdown_delay:
+                                            in_shutdown_delay = True
+                                            logger.debug(f"Channel {self.channel_id} in shutdown delay: {elapsed:.1f}s of {shutdown_delay}s elapsed")
+                                except Exception as e:
+                                    logger.debug(f"Error checking shutdown delay: {e}")
+
+                            # Only exit if we've seen no clients for several consecutive checks AND we're not in shutdown delay
+                            if no_clients_count >= max_empty_cycles and not in_shutdown_delay:
+                                logger.info(f"No clients for channel {self.channel_id} after {no_clients_count} consecutive checks and not in shutdown delay, exiting heartbeat thread")
                                 return  # This exits the thread
 
-                            # Skip this cycle if we have no clients
-                            continue
+                            # Skip this cycle if we have no clients but continue if in shutdown delay
+                            if not in_shutdown_delay:
+                                continue
+                            else:
+                                # Reset counter during shutdown delay to prevent premature exit
+                                no_clients_count = 0
+                                continue
                         else:
                             # Reset counter when we see clients
                             no_clients_count = 0

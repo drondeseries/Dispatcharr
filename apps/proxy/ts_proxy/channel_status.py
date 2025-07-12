@@ -264,6 +264,63 @@ class ChannelStatus:
                 'last_data_age': time.time() - manager.last_data_time
             }
 
+        # Add FFmpeg stream information
+        video_codec = metadata.get(ChannelMetadataField.VIDEO_CODEC.encode('utf-8'))
+        if video_codec:
+            info['video_codec'] = video_codec.decode('utf-8')
+
+        resolution = metadata.get(ChannelMetadataField.RESOLUTION.encode('utf-8'))
+        if resolution:
+            info['resolution'] = resolution.decode('utf-8')
+
+        source_fps = metadata.get(ChannelMetadataField.SOURCE_FPS.encode('utf-8'))
+        if source_fps:
+            info['source_fps'] = float(source_fps.decode('utf-8'))
+
+        pixel_format = metadata.get(ChannelMetadataField.PIXEL_FORMAT.encode('utf-8'))
+        if pixel_format:
+            info['pixel_format'] = pixel_format.decode('utf-8')
+
+        source_bitrate = metadata.get(ChannelMetadataField.SOURCE_BITRATE.encode('utf-8'))
+        if source_bitrate:
+            info['source_bitrate'] = float(source_bitrate.decode('utf-8'))
+
+        audio_codec = metadata.get(ChannelMetadataField.AUDIO_CODEC.encode('utf-8'))
+        if audio_codec:
+            info['audio_codec'] = audio_codec.decode('utf-8')
+
+        sample_rate = metadata.get(ChannelMetadataField.SAMPLE_RATE.encode('utf-8'))
+        if sample_rate:
+            info['sample_rate'] = int(sample_rate.decode('utf-8'))
+
+        audio_channels = metadata.get(ChannelMetadataField.AUDIO_CHANNELS.encode('utf-8'))
+        if audio_channels:
+            info['audio_channels'] = audio_channels.decode('utf-8')
+
+        audio_bitrate = metadata.get(ChannelMetadataField.AUDIO_BITRATE.encode('utf-8'))
+        if audio_bitrate:
+            info['audio_bitrate'] = float(audio_bitrate.decode('utf-8'))
+
+        # Add FFmpeg performance stats
+        ffmpeg_speed = metadata.get(ChannelMetadataField.FFMPEG_SPEED.encode('utf-8'))
+        if ffmpeg_speed:
+            info['ffmpeg_speed'] = float(ffmpeg_speed.decode('utf-8'))
+
+        ffmpeg_fps = metadata.get(ChannelMetadataField.FFMPEG_FPS.encode('utf-8'))
+        if ffmpeg_fps:
+            info['ffmpeg_fps'] = float(ffmpeg_fps.decode('utf-8'))
+
+        actual_fps = metadata.get(ChannelMetadataField.ACTUAL_FPS.encode('utf-8'))
+        if actual_fps:
+            info['actual_fps'] = float(actual_fps.decode('utf-8'))
+
+        ffmpeg_bitrate = metadata.get(ChannelMetadataField.FFMPEG_BITRATE.encode('utf-8'))
+        if ffmpeg_bitrate:
+            info['ffmpeg_bitrate'] = float(ffmpeg_bitrate.decode('utf-8'))
+        stream_type = metadata.get(ChannelMetadataField.STREAM_TYPE.encode('utf-8'))
+        if stream_type:
+            info['stream_type'] = stream_type.decode('utf-8')
+
         return info
 
     @staticmethod
@@ -307,16 +364,23 @@ class ChannelStatus:
             client_count = proxy_server.redis_client.scard(client_set_key) or 0
 
             # Calculate uptime
-            created_at = float(metadata.get(ChannelMetadataField.INIT_TIME.encode('utf-8'), b'0').decode('utf-8'))
+            init_time_bytes = metadata.get(ChannelMetadataField.INIT_TIME.encode('utf-8'), b'0')
+            created_at = float(init_time_bytes.decode('utf-8'))
             uptime = time.time() - created_at if created_at > 0 else 0
+
+            # Safely decode bytes or use defaults
+            def safe_decode(bytes_value, default="unknown"):
+                if bytes_value is None:
+                    return default
+                return bytes_value.decode('utf-8')
 
             # Simplified info
             info = {
                 'channel_id': channel_id,
-                'state': metadata.get(ChannelMetadataField.STATE.encode('utf-8'), b'unknown').decode('utf-8'),
-                'url': metadata.get(ChannelMetadataField.URL.encode('utf-8'), b'').decode('utf-8'),
-                'stream_profile': metadata.get(ChannelMetadataField.STREAM_PROFILE.encode('utf-8'), b'').decode('utf-8'),
-                'owner': metadata.get(ChannelMetadataField.OWNER.encode('utf-8'), b'unknown').decode('utf-8'),
+                'state': safe_decode(metadata.get(ChannelMetadataField.STATE.encode('utf-8'))),
+                'url': safe_decode(metadata.get(ChannelMetadataField.URL.encode('utf-8')), ""),
+                'stream_profile': safe_decode(metadata.get(ChannelMetadataField.STREAM_PROFILE.encode('utf-8')), ""),
+                'owner': safe_decode(metadata.get(ChannelMetadataField.OWNER.encode('utf-8'))),
                 'buffer_index': int(buffer_index_value.decode('utf-8')) if buffer_index_value else 0,
                 'client_count': client_count,
                 'uptime': uptime
@@ -376,14 +440,15 @@ class ChannelStatus:
                     # Efficient way - just retrieve the essentials
                     client_info = {
                         'client_id': client_id_str,
-                        'user_agent': proxy_server.redis_client.hget(client_key, 'user_agent'),
-                        'ip_address': proxy_server.redis_client.hget(client_key, 'ip_address').decode('utf-8'),
                     }
 
-                    if client_info['user_agent']:
-                        client_info['user_agent'] = client_info['user_agent'].decode('utf-8')
-                    else:
-                        client_info['user_agent'] = 'unknown'
+                    # Safely get user_agent and ip_address
+                    user_agent_bytes = proxy_server.redis_client.hget(client_key, 'user_agent')
+                    client_info['user_agent'] = safe_decode(user_agent_bytes)
+
+                    ip_address_bytes = proxy_server.redis_client.hget(client_key, 'ip_address')
+                    if ip_address_bytes:
+                        client_info['ip_address'] = safe_decode(ip_address_bytes)
 
                     # Just get connected_at for client age
                     connected_at_bytes = proxy_server.redis_client.hget(client_key, 'connected_at')
@@ -414,7 +479,32 @@ class ChannelStatus:
                 except ValueError:
                     logger.warning(f"Invalid m3u_profile_id format in Redis: {m3u_profile_id_bytes}")
 
+            # Add stream info to basic info as well
+            video_codec = metadata.get(ChannelMetadataField.VIDEO_CODEC.encode('utf-8'))
+            if video_codec:
+                info['video_codec'] = video_codec.decode('utf-8')
+
+            resolution = metadata.get(ChannelMetadataField.RESOLUTION.encode('utf-8'))
+            if resolution:
+                info['resolution'] = resolution.decode('utf-8')
+
+            source_fps = metadata.get(ChannelMetadataField.SOURCE_FPS.encode('utf-8'))
+            if source_fps:
+                info['source_fps'] = float(source_fps.decode('utf-8'))
+            ffmpeg_speed = metadata.get(ChannelMetadataField.FFMPEG_SPEED.encode('utf-8'))
+            if ffmpeg_speed:
+                info['ffmpeg_speed'] = float(ffmpeg_speed.decode('utf-8'))
+            audio_codec = metadata.get(ChannelMetadataField.AUDIO_CODEC.encode('utf-8'))
+            if audio_codec:
+                info['audio_codec'] = audio_codec.decode('utf-8')
+            audio_channels = metadata.get(ChannelMetadataField.AUDIO_CHANNELS.encode('utf-8'))
+            if audio_channels:
+                info['audio_channels'] = audio_channels.decode('utf-8')
+            stream_type = metadata.get(ChannelMetadataField.STREAM_TYPE.encode('utf-8'))
+            if stream_type:
+                info['stream_type'] = stream_type.decode('utf-8')
+
             return info
         except Exception as e:
-            logger.error(f"Error getting channel info: {e}")
+            logger.error(f"Error getting channel info: {e}", exc_info=True)  # Added exc_info for better debugging
             return None

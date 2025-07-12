@@ -27,6 +27,7 @@ const CustomTable = ({ table }) => {
           table.onSelectAllChange ? table.onSelectAllChange : null
         }
         selectedTableIds={table.selectedTableIds}
+        tableCellProps={table.tableCellProps}
       />
       <CustomTableBody
         getRowModel={table.getRowModel}
@@ -36,6 +37,8 @@ const CustomTable = ({ table }) => {
         renderBodyCell={table.renderBodyCell}
         getExpandedRowHeight={table.getExpandedRowHeight}
         getRowStyles={table.getRowStyles} // Pass the getRowStyles function
+        tableBodyProps={table.tableBodyProps}
+        tableCellProps={table.tableCellProps}
       />
     </Box>
   );

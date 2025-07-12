@@ -110,7 +110,7 @@ export default function TVChannelGuide({ startDate, endDate }) {
     // Apply channel group filter
     if (selectedGroupId !== 'all') {
       result = result.filter(
-        (channel) => channel.channel_group?.id === parseInt(selectedGroupId)
+        (channel) => channel.channel_group_id === parseInt(selectedGroupId)
       );
     }
 
@@ -492,7 +492,6 @@ export default function TVChannelGuide({ startDate, endDate }) {
       guideRef.current.scrollLeft = scrollPosition;
     }
   };
-
   // Renders each program block
   function renderProgram(program, channelStart) {
     const programKey = `${program.tvg_id}-${program.start_time}`;
@@ -522,17 +521,8 @@ export default function TVChannelGuide({ startDate, endDate }) {
     const isLive = now.isAfter(programStart) && now.isBefore(programEnd);
 
     // Determine if the program has ended
-    const isPast = now.isAfter(programEnd);
-
-    // Check if this program is expanded
+    const isPast = now.isAfter(programEnd);    // Check if this program is expanded
     const isExpanded = expandedProgramId === program.id;
-
-    // Calculate how much of the program is cut off
-    const cutOffMinutes = Math.max(
-      0,
-      channelStart.diff(programStart, 'minute')
-    );
-    const cutOffPx = (cutOffMinutes / MINUTE_INCREMENT) * MINUTE_BLOCK_WIDTH;
 
     // Set the height based on expanded state
     const rowHeight = isExpanded ? EXPANDED_PROGRAM_HEIGHT : PROGRAM_HEIGHT;
@@ -541,6 +531,25 @@ export default function TVChannelGuide({ startDate, endDate }) {
     // This will allow it to overlap programs to the right
     const MIN_EXPANDED_WIDTH = 450; // Minimum width in pixels when expanded
     const expandedWidthPx = Math.max(widthPx, MIN_EXPANDED_WIDTH);
+
+    // Calculate text positioning for long programs that start before the visible area
+    const currentScrollLeft = guideRef.current?.scrollLeft || 0;
+    const programStartInView = leftPx + gapSize;
+    const programEndInView = leftPx + gapSize + widthPx;
+    const viewportLeft = currentScrollLeft;
+
+    // Check if program starts before viewport but extends into it
+    const startsBeforeView = programStartInView < viewportLeft;
+    const extendsIntoView = programEndInView > viewportLeft;
+
+    // Calculate text offset to position it at the visible portion
+    let textOffsetLeft = 0;
+    if (startsBeforeView && extendsIntoView) {
+      // Position text at the start of the visible area, but not beyond the program end
+      const visibleStart = Math.max(viewportLeft - programStartInView, 0);
+      const maxOffset = widthPx - 200; // Leave some space for text, don't push to very end
+      textOffsetLeft = Math.min(visibleStart, maxOffset);
+    }
 
     return (
       <Box
@@ -588,7 +597,12 @@ export default function TVChannelGuide({ startDate, endDate }) {
             transition: 'all 0.2s ease',
           }}
         >
-          <Box>
+          <Box
+            style={{
+              transform: `translateX(${textOffsetLeft}px)`,
+              transition: 'transform 0.1s ease-out',
+            }}
+          >
             <Text
               component="div"
               size={isExpanded ? 'lg' : 'md'}
@@ -624,23 +638,28 @@ export default function TVChannelGuide({ startDate, endDate }) {
             >
               {programStart.format('h:mma')} - {programEnd.format('h:mma')}
             </Text>
-          </Box>
-
-          {/* Description is always shown but expands when row is expanded */}
+          </Box>          {/* Description is always shown but expands when row is expanded */}
           {program.description && (
-            <Text
-              size="xs"
+            <Box
               style={{
-                marginTop: '4px',
-                whiteSpace: isExpanded ? 'normal' : 'nowrap',
-                textOverflow: isExpanded ? 'clip' : 'ellipsis',
-                overflow: isExpanded ? 'auto' : 'hidden',
-                color: isPast ? '#718096' : '#cbd5e0',
-                maxHeight: isExpanded ? '80px' : 'unset',
+                transform: `translateX(${textOffsetLeft}px)`,
+                transition: 'transform 0.1s ease-out',
               }}
             >
-              {program.description}
-            </Text>
+              <Text
+                size="xs"
+                style={{
+                  marginTop: '4px',
+                  whiteSpace: isExpanded ? 'normal' : 'nowrap',
+                  textOverflow: isExpanded ? 'clip' : 'ellipsis',
+                  overflow: isExpanded ? 'auto' : 'hidden',
+                  color: isPast ? '#718096' : '#cbd5e0',
+                  maxHeight: isExpanded ? '80px' : 'unset',
+                }}
+              >
+                {program.description}
+              </Text>
+            </Box>
           )}
 
           {/* Expanded content */}
@@ -693,11 +712,10 @@ export default function TVChannelGuide({ startDate, endDate }) {
       // Get unique channel group IDs from the channels that have program data
       const usedGroupIds = new Set();
       guideChannels.forEach((channel) => {
-        if (channel.channel_group?.id) {
-          usedGroupIds.add(channel.channel_group.id);
+        if (channel.channel_group_id) {
+          usedGroupIds.add(channel.channel_group_id);
         }
       });
-
       // Only add groups that are actually used by channels in the guide
       Object.values(channelGroups)
         .filter((group) => usedGroupIds.has(group.id))
@@ -709,7 +727,6 @@ export default function TVChannelGuide({ startDate, endDate }) {
           });
         });
     }
-
     return options;
   }, [channelGroups, guideChannels]);
 
@@ -838,7 +855,7 @@ export default function TVChannelGuide({ startDate, endDate }) {
           {(searchQuery !== '' ||
             selectedGroupId !== 'all' ||
             selectedProfileId !== 'all') && (
-              <Button variant="subtle" onClick={clearFilters} size="sm" compact>
+              <Button variant="subtle" onClick={clearFilters} size="sm">
                 Clear Filters
               </Button>
             )}
@@ -908,101 +925,100 @@ export default function TVChannelGuide({ startDate, endDate }) {
                   borderBottom: '1px solid #27272A',
                   width: hourTimeline.length * HOUR_WIDTH,
                 }}
-              >
-                {hourTimeline.map((hourData, hourIndex) => {
-                  const { time, isNewDay, dayLabel } = hourData;
+              >                {hourTimeline.map((hourData) => {
+                const { time, isNewDay } = hourData;
 
-                  return (
-                    <Box
-                      key={time.format()}
+                return (
+                  <Box
+                    key={time.format()}
+                    style={{
+                      width: HOUR_WIDTH,
+                      height: '40px',
+                      position: 'relative',
+                      color: '#a0aec0',
+                      borderRight: '1px solid #8DAFAA',
+                      cursor: 'pointer',
+                      borderLeft: isNewDay ? '2px solid #3BA882' : 'none', // Highlight day boundaries
+                      backgroundColor: isNewDay ? '#1E2A27' : '#1B2421', // Subtle background for new days
+                    }}
+                    onClick={(e) => handleTimeClick(time, e)}
+                  >
+                    {/* Remove the special day label for new days since we'll show day for all hours */}
+
+                    {/* Position time label at the left border of each hour block */}
+                    <Text
+                      size="sm"
                       style={{
-                        width: HOUR_WIDTH,
-                        height: '40px',
-                        position: 'relative',
-                        color: '#a0aec0',
-                        borderRight: '1px solid #8DAFAA',
-                        cursor: 'pointer',
-                        borderLeft: isNewDay ? '2px solid #3BA882' : 'none', // Highlight day boundaries
-                        backgroundColor: isNewDay ? '#1E2A27' : '#1B2421', // Subtle background for new days
+                        position: 'absolute',
+                        top: '8px', // Consistent positioning for all hours
+                        left: '4px',
+                        transform: 'none',
+                        borderRadius: '2px',
+                        lineHeight: 1.2,
+                        textAlign: 'left',
                       }}
-                      onClick={(e) => handleTimeClick(time, e)}
                     >
-                      {/* Remove the special day label for new days since we'll show day for all hours */}
-
-                      {/* Position time label at the left border of each hour block */}
+                      {/* Show day above time for every hour using the same format */}
                       <Text
-                        size="sm"
+                        span
+                        size="xs"
                         style={{
-                          position: 'absolute',
-                          top: '8px', // Consistent positioning for all hours
-                          left: '4px',
-                          transform: 'none',
-                          borderRadius: '2px',
-                          lineHeight: 1.2,
-                          textAlign: 'left',
+                          display: 'block',
+                          opacity: 0.7,
+                          fontWeight: isNewDay ? 600 : 400, // Still emphasize day transitions
+                          color: isNewDay ? '#3BA882' : undefined,
                         }}
                       >
-                        {/* Show day above time for every hour using the same format */}
-                        <Text
-                          span
-                          size="xs"
-                          style={{
-                            display: 'block',
-                            opacity: 0.7,
-                            fontWeight: isNewDay ? 600 : 400, // Still emphasize day transitions
-                            color: isNewDay ? '#3BA882' : undefined,
-                          }}
-                        >
-                          {formatDayLabel(time)}{' '}
-                          {/* Use same formatDayLabel function for all hours */}
-                        </Text>
-                        {time.format('h:mm')}
-                        <Text span size="xs" ml={1} opacity={0.7}>
-                          {time.format('A')}
-                        </Text>
+                        {formatDayLabel(time)}{' '}
+                        {/* Use same formatDayLabel function for all hours */}
                       </Text>
+                      {time.format('h:mm')}
+                      <Text span size="xs" ml={1} opacity={0.7}>
+                        {time.format('A')}
+                      </Text>
+                    </Text>
 
-                      {/* Hour boundary marker - more visible */}
-                      <Box
-                        style={{
-                          position: 'absolute',
-                          left: 0,
-                          top: 0,
-                          bottom: 0,
-                          width: '1px',
-                          backgroundColor: '#27272A',
-                          zIndex: 10,
-                        }}
-                      />
+                    {/* Hour boundary marker - more visible */}
+                    <Box
+                      style={{
+                        position: 'absolute',
+                        left: 0,
+                        top: 0,
+                        bottom: 0,
+                        width: '1px',
+                        backgroundColor: '#27272A',
+                        zIndex: 10,
+                      }}
+                    />
 
-                      {/* Quarter hour tick marks */}
-                      <Box
-                        style={{
-                          position: 'absolute',
-                          bottom: 0,
-                          width: '100%',
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          padding: '0 1px',
-                        }}
-                      >
-                        {[15, 30, 45].map((minute) => (
-                          <Box
-                            key={minute}
-                            style={{
-                              width: '1px',
-                              height: '8px',
-                              backgroundColor: '#718096',
-                              position: 'absolute',
-                              bottom: 0,
-                              left: `${(minute / 60) * 100}%`,
-                            }}
-                          />
-                        ))}
-                      </Box>
+                    {/* Quarter hour tick marks */}
+                    <Box
+                      style={{
+                        position: 'absolute',
+                        bottom: 0,
+                        width: '100%',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        padding: '0 1px',
+                      }}
+                    >
+                      {[15, 30, 45].map((minute) => (
+                        <Box
+                          key={minute}
+                          style={{
+                            width: '1px',
+                            height: '8px',
+                            backgroundColor: '#718096',
+                            position: 'absolute',
+                            bottom: 0,
+                            left: `${(minute / 60) * 100}%`,
+                          }}
+                        />
+                      ))}
                     </Box>
-                  );
-                })}
+                  </Box>
+                );
+              })}
               </Box>
             </Box>
           </Box>
@@ -1087,7 +1103,7 @@ export default function TVChannelGuide({ startDate, endDate }) {
                         borderRight: '1px solid #27272A', // Increased border width for visibility
                         borderBottom: '1px solid #27272A', // Match the row border
                         boxShadow: '2px 0 5px rgba(0,0,0,0.2)', // Added shadow for depth
-                        position: 'sticky',
+                        //position: 'sticky',
                         left: 0,
                         zIndex: 30, // Higher than expanded programs to prevent overlap
                         height: rowHeight,

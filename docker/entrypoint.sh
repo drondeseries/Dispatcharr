@@ -98,9 +98,11 @@ chmod +x /etc/profile.d/dispatcharr.sh
 pip install django-filter
 
 # Run init scripts
-echo "Starting init process..."
+echo "Starting user setup..."
 . /app/docker/init/01-user-setup.sh
+echo "Setting up PostgreSQL..."
 . /app/docker/init/02-postgres.sh
+echo "Starting init process..."
 . /app/docker/init/03-init-dispatcharr.sh
 
 # Start PostgreSQL
